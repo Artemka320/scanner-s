@@ -2,7 +2,7 @@ import requests
 import time
 import os
 from datetime import datetime, timedelta
-from openpyxl import Workbook
+from openpyxl import Workbook  # ✅ precisa do openpyxl instalado
 
 # 🔹 criar Excel
 wb = Workbook()
@@ -11,11 +11,11 @@ ws.title = "Posts Virais"
 
 ws.append(["Profile", "Likes", "Comments", "Ratio", "Link"])
 
-API_TOKEN = os.getenv("APIFY_TOKEN", "apify_api_xeLLSxvi4IIcjhIRWkZzEGEQhbNNz83pGeVa")
+API_TOKEN = os.getenv("APIFY_TOKEN", "apify_api_ZEG61KfKbxU9peHKB2L0ADw7lXJ6bQ4qFQnY")
 
 RESULTS_PER_PAGE = 50
 DELAY = 0.5
-VIRAL_THRESHOLD = 0.05  # ajustável
+VIRAL_THRESHOLD = 0.05
 
 url = f"https://api.apify.com/v2/acts/apify~instagram-scraper/run-sync-get-dataset-items?token={API_TOKEN}"
 
@@ -63,12 +63,15 @@ def scan():
     four_days_ago = datetime.now() - timedelta(days=4)
 
     for p in posts:
-
         timestamp = p.get("timestamp")
         if not timestamp:
             continue
 
-        post_date = datetime.fromisoformat(timestamp.replace("Z", ""))
+        # ✅ proteção contra erro de formato de data
+        try:
+            post_date = datetime.fromisoformat(timestamp.replace("Z", ""))
+        except Exception:
+            continue
 
         if post_date < four_days_ago:
             continue
@@ -79,21 +82,20 @@ def scan():
         likes = p.get("likesCount", 0)
         comments = p.get("commentsCount", 0)
 
-        # 🔥 cálculo simples de viralidade
+        # 🔥 cálculo de viralidade
         ratio = (likes + comments) / 1000
 
         if ratio > VIRAL_THRESHOLD:
-
-            # 🔥 guardar no Excel IMEDIATAMENTE
             ws.append([
                 profile,
                 likes,
                 comments,
-                ratio,
+                round(ratio, 3),
                 f'=HYPERLINK("{link}", "Ver post")'
             ])
 
-            wb.save("instagram_posts.xlsx")  # 💾 GUARDA SEMPRE
+            # 💾 guarda sempre o Excel atualizado
+            wb.save("instagram_posts.xlsx")
 
             print("🔥 POST VIRAL (últimos 4 dias)")
             print("━━━━━━━━━━━━━━━━")

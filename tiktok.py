@@ -1,123 +1,101 @@
 import requests
-import time
-import os
 from datetime import datetime, timedelta
-from openpyxl import Workbook
+import time
 
-# 🔹 criar Excel
-wb = Workbook()
-ws = wb.active
-ws.title = "Videos Virais"
+# 🔐 CONFIG
+API_KEY = "apify_api_ZEG61KfKbxU9peHKB2L0ADw7lXJ6bQ4qFQnY"
+DATABASE_ID = "32d1aebf9259809b98c1e87fc7e66d39"
+NOTION_TOKEN = "ntn_u72267577213OBPMFlQFK85T9P1j30rp2EN5NoFBCd09QO"
 
-# cabeçalhos
-ws.append(["Creator", "Followers", "Views", "Likes", "Ratio", "Link"])
+headers_notion = {
+    "Authorization": f"Bearer {NOTION_TOKEN}",
+    "Content-Type": "application/json",
+    "Notion-Version": "2022-06-28"
+}
 
-API_TOKEN = os.getenv("APIFY_TOKEN", "apify_api_xeLLSxvi4IIcjhIRWkZzEGEQhbNNz83pGeVa")
+VIRAL_THRESHOLD = 0.15
 
-RESULTS_PER_PAGE = 50
-DELAY = 1
-VIRAL_THRESHOLD = 0.15  # 15%
-
-url = f"https://api.apify.com/v2/acts/clockworks~tiktok-scraper/run-sync-get-dataset-items?token={API_TOKEN}"
-
-def get_videos():
+# 🔹 enviar para notion
+def add_to_notion(creator, followers, views, likes, link):
     data = {
-        "profiles": [
-            "https://www.tiktok.com/@steven",
-            "https://www.tiktok.com/@theventureroom",
-            "https://www.tiktok.com/@bloombergbusiness"
-        ],
-        "resultsPerPage": RESULTS_PER_PAGE
+        "parent": {"database_id": DATABASE_ID},
+        "properties": {
+            "Vídeo": {"title": [{"text": {"content": creator}}]},
+            "Followers": {"number": followers},
+            "Views": {"number": views},
+            "Likes": {"number": likes},
+            "Link": {"url": link}
+        }
     }
 
-    try:
-        res = requests.post(url, json=data)
-        print("DEBUG:", res.text[:200])
+    res = requests.post(
+        "https://api.notion.com/v1/pages",
+        headers=headers_notion,
+        json=data,
+        timeout=30
+    )
 
-        res.raise_for_status()
-        result = res.json()
+    if res.status_code not in [200, 201]:
+        print("❌ Notion erro:", res.text)
+    else:
+        print("✅ Enviado")
 
-        if isinstance(result, list):
-            return result
 
-        if isinstance(result, dict) and "data" in result:
-            return result["data"]
+# 🔹 APIFY
+def get_videos(profile_url):
+    url = f"https://api.apify.com/v2/acts/clockworks~tiktok-scraper/run-sync-get-dataset-items?token={API_KEY}"
 
-        return []
+    payload = {
+        "profiles": [profile_url],
+        "resultsPerPage": 10
+    }
 
-    except Exception as e:
-        print("❌ erro na API:", e)
-        return []
+    res = requests.post(url, json=payload, timeout=30)
+    res.raise_for_status()
 
-def get_followers(author):
-    if not isinstance(author, dict):
-        return 0
+    return res.json()
 
-    for key in ["fans", "followers", "followerCount", "fansCount"]:
-        val = author.get(key)
-        if isinstance(val, int):
-            return val
 
-    return 0
-
+# 🔹 scanner
 def scan():
-    print("🚀 Scanner TikTok\n")
+    print("🚀 Scanner API TikTok\n")
 
-    videos = get_videos()
+    profiles = [
+        "https://www.tiktok.com/@theventureroom",
+        "https://www.tiktok.com/@bloombergbusiness"
+    ]
 
-    if not videos:
-        print("❌ Nenhum vídeo encontrado")
-        return
-
-    # 🔥 últimos 4 dias
     four_days_ago = datetime.now() - timedelta(days=4)
 
-    for v in videos:
+    for profile in profiles:
+        try:
+            videos = get_videos(profile)
+            username = profile.split("@")[-1]
 
-        # 🔹 filtrar por data
-        create_time = v.get("createTime")
-        if not create_time:
-            continue
+            for v in videos:
+                create_time = v.get("createTime", 0)
+                video_date = datetime.fromtimestamp(create_time)
 
-        video_date = datetime.fromtimestamp(create_time)
+                if video_date < four_days_ago:
+                    continue
 
-        if video_date < four_days_ago:
-            continue
+                views = v.get("playCount", 0)
+                likes = v.get("diggCount", 0)
+                followers = v.get("authorStats", {}).get("followerCount", 1)
 
-        author = v.get("authorMeta", {})
-        creator = author.get("name") or author.get("nickName") or "desconhecido"
+                link = v.get("webVideoUrl")
 
-        views = v.get("playCount", 0)
-        likes = v.get("diggCount", 0)
-        link = v.get("webVideoUrl", "")
+                ratio = views / followers if followers > 0 else 0
 
-        followers = get_followers(author)
+                if ratio > VIRAL_THRESHOLD:
+                    add_to_notion(username, followers, views, likes, link)
 
-        if followers == 0:
-            continue
+                    print("🔥 VIRAL:", username, views, likes)
 
-        ratio = views / followers
+                    time.sleep(1)
 
-        if ratio > VIRAL_THRESHOLD:
+        except Exception as e:
+            print("❌ erro:", profile, e)
 
-            # 🔥 guardar no Excel
-            ws.append([creator, followers, views, likes, ratio, link])
 
-            print("🔥 VIDEO VIRAL (últimos 4 dias)")
-            print("━━━━━━━━━━━━━━━━")
-            print("Creator:", creator)
-            print("Followers:", followers)
-            print("Views:", views)
-            print("Likes:", likes)
-            print("Percentagem de viralização:", round(ratio * 100, 2), "%")
-            print("Link:", link)
-            print()
-
-            time.sleep(DELAY)
-
-# 🔹 executar
 scan()
-
-# 🔹 guardar Excel
-wb.save("videos.xlsx")
-print("✅ Excel guardado!")
